@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>LINE返信管理</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; }
+  .conv { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .meta { color: #888; font-size: 12px; margin-bottom: 6px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 6px; }
+  .badge.pending { background: #fff3cd; color: #856404; }
+  .badge.draft_ready { background: #d1ecf1; color: #0c5460; }
+  textarea { width: 100%; box-sizing: border-box; font-family: inherit; padding: 8px; border-radius: 6px; border: 1px solid #ccc; }
+  button { padding: 8px 18px; border: none; border-radius: 6px; background: #06c755; color: white; cursor: pointer; margin-right: 8px; }
+  button.secondary { background: #6c757d; }
+  button:disabled { opacity: 0.5; }
+  #empty { color: #999; }
+</style>
+</head>
+<body>
+<h1>未返信メッセージ一覧</h1>
+<div id="list">読み込み中...</div>
+<script>
+async function load() {
+  const res = await fetch('/api/pending');
+  const data = await res.json();
+  const list = document.getElementById('list');
+  if (data.length === 0) {
+    list.innerHTML = '<p id="empty">未返信のメッセージはありません</p>';
+    return;
+  }
+  list.innerHTML = '';
+  data.forEach(conv => {
+    const div = document.createElement('div');
