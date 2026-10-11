@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { getPendingConversations, getHistory, saveDraft } = require('./db');
 const { generateReply } = require('./claudeClient');
+const { runDailyJobOps } = require('./jobs/ops');
 
 const REPLY_THRESHOLD_MS = Number(process.env.REPLY_THRESHOLD_MINUTES || 60) * 60 * 1000;
 
@@ -22,6 +23,9 @@ async function checkAndGenerateDrafts() {
 
 function startScheduler() {
   cron.schedule('*/5 * * * *', checkAndGenerateDrafts);
+  cron.schedule(process.env.JOB_OPS_CRON || '0 9 * * *', () => {
+    runDailyJobOps().catch((err) => console.error('job ops failed: ' + err.message));
+  }, { timezone: 'Asia/Tokyo' });
   console.log('Scheduler started');
 }
 

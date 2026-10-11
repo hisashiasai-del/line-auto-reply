@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>求人掲載・運用</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; max-width: 860px; margin: 32px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 32px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .meta { color: #888; font-size: 12px; }
+  .err { color: #b00020; font-size: 13px; margin: 2px 0; } .warn { color: #8a6d00; font-size: 13px; margin: 2px 0; }
+  .ch { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin: 2px 4px 2px 0; background: #eee; }
+  .ch.live { background: #d4edda; color: #155724; } .ch.pending_manual { background: #fff3cd; color: #856404; } .ch.expired { background: #f8d7da; color: #721c24; }
+  label { display: block; font-size: 12px; color: #555; margin-top: 8px; }
+  input, textarea, select { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; border: 1px solid #ccc; border-radius: 6px; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+  button { padding: 6px 14px; border: none; border-radius: 6px; background: #2557a7; color: #fff; cursor: pointer; margin: 8px 6px 0 0; font-size: 13px; }
+  button.sub { background: #6c757d; } button:disabled { opacity: .5; }
+  pre { white-space: pre-wrap; background: #f6f6f6; padding: 8px; border-radius: 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>求人掲載・運用</h1>
+<p class="meta"><a href="/admin/admin.html">LINE返信管理</a> ・ <a href="/careers" target="_blank">自社求人ページ</a> ・ <a href="/feeds/indeed.xml" target="_blank">Indeedフィード</a></p>
+<button onclick="runOps()">運用チェックを今すぐ実行</button>
+<pre id="ops" hidden></pre>
+
+<h2>求人</h2>
+<div id="kit"></div>
+<div id="jobs">読み込み中...</div>
+
+<h2>応募者</h2>
+<div id="applicants">読み込み中...</div>
+
+<script>
+const LABEL = { site: '自社ページ', indeed_feed: 'Indeedフィード', indeed: 'Indeed', wantedly: 'Wantedly' };
+const CH_STATUS = { off: '停止', live: '掲載中', pending_manual: '貼り付け待ち', expired: '期限切れ' };
+const FIELDS = [
+  ['title', 'Indeed職種名'], ['wantedly_title', 'Wantedlyタイトル'], ['job_category', '職種カテゴリ'],
+  ['employment_type', '契約形態'], ['pay_min', '報酬下限'], ['pay_max', '報酬上限'], ['pay_unit', '単位（時給/月給/年収）'],
+  ['pay_tax', '税込/税別'], ['transport_fee', '交通費'], ['work_hours', '稼働日数・時間帯'],
+  ['postal_code', '郵便番号'], ['address_region', '都道府県'], ['address_locality', '市区町村'], ['address_street', '番地・建物'],
+];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+
+async function api(method, url, body) {
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json();
+  if (!res.ok) {
+    const detail = data.validation ? '\n' + data.validation.errors.join('\n') : '';
+    alert((data.error || 'エラー') + detail);
+    throw new Error(data.error);
+  }
+  return data;
+}
+
+function jobCard(job) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  const chMap = Object.fromEntries(job.channels.map(c => [c.platform, c]));
+  // 同じ指摘は1行にまとめ、一部の媒体だけの指摘には媒体名を付ける
+  const grouped = new Map();
+  for (const [p, v] of Object.entries(job.validation)) {
+    for (const [kind, list] of [['err', v.errors], ['warn', v.warnings]]) {
+      for (const msg of list) {
+        const key = kind + msg;
+        if (!grouped.has(key)) grouped.set(key, { kind, msg, platforms: [] });
+        grouped.get(key).platforms.push(LABEL[p]);
+      }
+    }
+  }
+  const uniqueIssues = [...grouped.values()].map(g => '<p class="' + g.kind + '">' + (g.kind === 'err' ? '✕ ' : '△ ') +
+    (g.platforms.length < Object.keys(LABEL).length ? '[' + g.platforms.join('・') + '] ' : '') + esc(g.msg) + '</p>');
+  const chHtml = Object.keys(LABEL).map(p => {
+    const c = chMap[p] || { status: 'off' };
+    const exp = c.expires_at ? '（〜' + new Date(c.expires_at).toLocaleDateString('ja-JP') + '）' : '';
+    const link = c.external_url ? ' <a href="' + esc(c.external_url) + '" target="_blank">↗</a>' : '';
+    return '<span class="ch ' + c.status + '">' + LABEL[p] + '：' + CH_STATUS[c.status] + exp + link + '</span>';
+  }).join('');
+
+  div.innerHTML =
+    '<strong>' + esc(job.title || job.slug) + '</strong> <span class="meta">' + esc(job.slug) + '・' + esc(job.status) + '</span>' +
+    '<div>' + chHtml + '</div>' + uniqueIssues.join('') +
+    '<details><summary>内容を編集</summary><div class="row">' +
+    FIELDS.map(([k, l]) => '<label>' + l + '<input data-f="' + k + '" value="' + esc(job[k]) + '"></label>').join('') +
+    '<label>リモート<select data-f="remote">' + ['none', 'partial', 'full'].map(v => '<option' + (job.remote === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></label></div>' +
+    '<label>仕事内容<textarea data-f="description" rows="8">' + esc(job.description) + '</textarea></label>' +
+    '<label>歓迎する経験<textarea data-f="requirements" rows="3">' + esc(job.requirements) + '</textarea></label>' +
+    '<button data-a="save">保存</button><button class="sub" data-a="draft">AIで原稿を整える</button><pre data-draft hidden></pre></details>' +
+    '<div>' + Object.keys(LABEL).map(p => {
+      const c = chMap[p] || { status: 'off' };
+      if (c.status === 'live') return '<button class="sub" data-ch="' + p + '" data-act="disable">' + LABEL[p] + 'を停止</button>';
+      if (c.status === 'pending_manual') return '<button data-ch="' + p + '" data-act="confirm">' + LABEL[p] + 'の公開URLを登録</button>';
+      return '<button data-ch="' + p + '" data-act="enable">' + LABEL[p] + 'に掲載</button>';
+    }).join('') + '</div>';
+
+  div.querySelector('[data-a=save]').onclick = async () => {
+    const body = {};
+    div.querySelectorAll('[data-f]').forEach(el => { body[el.dataset.f] = el.value; });
+    ['pay_min', 'pay_max'].forEach(k => { body[k] = body[k] === '' ? null : Number(body[k]); });
+    const r = await api('PATCH', '/api/recruit/jobs/' + job.id, body);
+    if (r.needs_repost.length) alert(r.needs_repost.map(p => LABEL[p]).join('・') + ' は掲載中です。管理画面の原稿も更新してください。');
+    load();
+  };
+  div.querySelector('[data-a=draft]').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const instructions = prompt('追加の指示（任意）', '') || '';
+      const r = await api('POST', '/api/recruit/jobs/' + job.id + '/draft', { instructions });
+      for (const k of ['title', 'wantedly_title', 'description', 'requirements']) div.querySelector('[data-f=' + k + ']').value = r.draft[k];
+      const pre = div.querySelector('[data-draft]');
+      pre.hidden = false;
+      pre.textContent = '入力欄に反映しました（まだ保存していません）。\n公開前に確認すること:\n・' + r.draft.open_questions.join('\n・');
+    } finally { e.target.disabled = false; }
+  };
+  div.querySelectorAll('[data-ch]').forEach(btn => btn.onclick = async () => {
+    const p = btn.dataset.ch, act = btn.dataset.act;
+    const body = { action: act };
+    if (act === 'confirm') {
+      body.external_url = prompt(LABEL[p] + 'で公開した求人のURL');
+      if (!body.external_url) return;
+      body.expires_in_days = prompt('掲載期間（日数。無期限なら空欄）', p === 'wantedly' ? '30' : '');
+    }
+    const r = await api('POST', '/api/recruit/jobs/' + job.id + '/channels/' + p, body);
+    if (r.kit) showKit(p, r.kit);
+    load();
+  });
+  return div;
+}
+
+function showKit(platform, kit) {
+  const el = document.getElementById('kit');
+  el.className = 'card';
+  el.innerHTML = '<h3>' + LABEL[platform] + ' 掲載キット</h3><p class="meta"><a href="' + esc(kit.dashboard) + '" target="_blank">管理画面を開く</a>。各項目をコピーして貼り付け、公開後に「公開URLを登録」を押してください。</p>' +
+    kit.fields.map(([k, v], i) => '<label>' + esc(k) + ' <button class="sub" data-copy="' + i + '">コピー</button></label><pre>' + esc(v) + '</pre>').join('');
+  el.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => navigator.clipboard.writeText(kit.fields[b.dataset.copy][1]));
+  el.scrollIntoView();
+}
+
+function applicantCard(a) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.innerHTML = '<strong>' + esc(a.name || '名前不明') + '</strong> <span class="meta">' + esc(LABEL[a.platform]) + '・' + esc(a.job_title || '求人不明') + '・' +
+    new Date(a.received_at).toLocaleString('ja-JP') + '</span><div class="meta">' + esc(a.email) + ' ' + esc(a.phone) + '</div>' +
+    (a.message ? '<pre>' + esc(a.message) + '</pre>' : '') +
+    (a.draft_reply ? '<label>返信の下書き</label><pre>' + esc(a.draft_reply) + '</pre>' : '') +
+    '<select>' + ['new', 'contacted', 'interview', 'hired', 'rejected', 'withdrawn'].map(s => '<option' + (a.status === s ? ' selected' : '') + '>' + s + '</option>').join('') + '</select>' +
+    '<button class="sub" data-a="draft">返信を下書き</button>';
+  div.querySelector('select').onchange = async (e) => { await api('PATCH', '/api/recruit/applicants/' + a.id, { status: e.target.value }); loadApplicants(); };
+  div.querySelector('[data-a=draft]').onclick = async (e) => { e.target.disabled = true; try { await api('POST', '/api/recruit/applicants/' + a.id + '/draft'); loadApplicants(); } finally { e.target.disabled = false; } };
+  return div;
+}
+
+async function load() {
+  const jobs = await (await fetch('/api/recruit/jobs')).json();
+  const el = document.getElementById('jobs');
+  el.innerHTML = jobs.length ? '' : '<p class="meta">求人がありません（npm run seed:jobs で取り込めます）</p>';
+  jobs.forEach(j => el.appendChild(jobCard(j)));
+}
+
+async function loadApplicants() {
+  const list = await (await fetch('/api/recruit/applicants')).json();
+  const el = document.getElementById('applicants');
+  el.innerHTML = list.length ? '' : '<p class="meta">応募はまだありません</p>';
+  list.forEach(a => el.appendChild(applicantCard(a)));
+}
+
+async function runOps() {
+  const r = await api('POST', '/api/recruit/ops/run');
+  const el = document.getElementById('ops');
+  el.hidden = false;
+  el.textContent = r.header + '\n' + (r.lines.join('\n') || '対応が必要な項目はありません');
+  load(); loadApplicants();
+}
+
+load();
+loadApplicants();
+</script>
+</body>
+</html>

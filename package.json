@@ -4,9 +4,12 @@
   "description": "LINE auto reply system",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "seed:jobs": "node jobs/seed.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "axios": "^1.7.7",
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
