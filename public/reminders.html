@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>面談リマインド</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; max-width: 860px; margin: 32px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 32px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .meta { color: #777; font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; margin-right: 4px; background: #eee; }
+  .scheduled { background: #d1ecf1; color: #0c5460; } .sent { background: #d4edda; color: #155724; }
+  .failed, .no_channel { background: #f8d7da; color: #721c24; } .cancelled { background: #eee; color: #888; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; } td, th { border-bottom: 1px solid #eee; padding: 6px; text-align: left; }
+  select, input { font: inherit; font-size: 12px; }
+  button { padding: 6px 14px; border: none; border-radius: 6px; background: #06c755; color: #fff; cursor: pointer; margin-right: 6px; }
+</style>
+</head>
+<body>
+<h1>面談リマインド</h1>
+<p class="meta">前日 12:00 と当日 9:00 (JST) に自動送信します。フリーランス → 公式LINE、企業 → Messenger。</p>
+<button onclick="post('/api/calendar/sync')">カレンダー同期</button>
+<button onclick="post('/api/reminders/run')">期限到来分を今すぐ送信</button>
+
+<h2>今後の面談</h2>
+<div id="meetings">読み込み中...</div>
+
+<h2>連絡先</h2>
+<table id="contacts"></table>
+
+<script>
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = (ms) => new Date(ms).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const KIND = { day_before: '前日', same_day: '当日' };
+
+async function post(url) {
+  const res = await fetch(url, { method: 'POST' });
+  alert(JSON.stringify(await res.json()));
+  load();
+}
+
+async function patchContact(id, field, value) {
+  await fetch('/api/contacts/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [field]: value }) });
+  load();
+}
+
+async function load() {
+  const [meetings, contacts] = await Promise.all([fetch('/api/meetings').then((r) => r.json()), fetch('/api/contacts').then((r) => r.json())]);
+  const names = Object.fromEntries(contacts.map((c) => [c.id, c.name || '(名前未設定)']));
+  document.getElementById('meetings').innerHTML = meetings.length ? meetings.map((m) => `
+    <div class="card">
+      <span class="badge ${m.status}">${m.status === 'cancelled' ? 'キャンセル' : '予定'}</span>
+      <strong>${esc(fmt(m.start_at))} ${esc(m.title)}</strong>
+      <div class="meta">取得元: ${esc(m.source)} ／ 参加者: ${m.participants.map((p) => esc(p.name || '(名前未設定)') + '（' + (p.kind === 'company' ? '企業' : 'フリーランス') + '）').join('、') || 'なし'}</div>
+      <div>${m.reminders.map((r) => `<span class="badge ${r.status}">${esc(names[r.contact_id])} ${KIND[r.kind]} ${esc(r.channel || '-')} ${esc(fmt(r.send_at))} ${r.status}</span>`).join('')}</div>
+    </div>`).join('') : '<p class="meta">予定はありません</p>';
+
+  document.getElementById('contacts').innerHTML = '<tr><th>名前</th><th>会社</th><th>種別</th><th>LINE</th><th>Messenger</th><th>メール</th></tr>' +
+    contacts.map((c) => `<tr>
+      <td><input value="${esc(c.name)}" onchange="patchContact(${c.id}, 'name', this.value)"></td>
+      <td><input value="${esc(c.company_name)}" onchange="patchContact(${c.id}, 'company_name', this.value)"></td>
+      <td><select onchange="patchContact(${c.id}, 'kind', this.value)">
+        <option value="freelancer" ${c.kind === 'freelancer' ? 'selected' : ''}>フリーランス</option>
+        <option value="company" ${c.kind === 'company' ? 'selected' : ''}>企業</option></select></td>
+      <td>${c.line_user_id ? '✓' : ''}</td><td>${c.messenger_psid ? '✓' : ''}</td>
+      <td><input value="${esc(c.email)}" onchange="patchContact(${c.id}, 'email', this.value)"></td>
+    </tr>`).join('');
+}
+load();
+</script>
+</body>
+</html>

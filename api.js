@@ -3,6 +3,7 @@ const router = express.Router();
 const { pushMessage } = require('./lineClient');
 const { addMessage, markReplied, saveDraft, getActionableConversations, getHistory } = require('./db');
 const { generateReply } = require('./claudeClient');
+const { notifyConversationActivity } = require('./reminders/chatDetector');
 
 router.get('/pending', (req, res) => {
   const conversations = getActionableConversations();
@@ -26,6 +27,7 @@ router.post('/reply', async (req, res) => {
     const now = Date.now();
     addMessage(lineUserId, 'staff', text, now);
     markReplied(lineUserId, now, 'replied');
+    notifyConversationActivity('line', lineUserId);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

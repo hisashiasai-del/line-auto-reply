@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { verifySignature, getProfile } = require('./lineClient');
 const { upsertConversationOnUserMessage, addMessage } = require('./db');
+const { upsertContactFromChannel } = require('./reminders/store');
+const { notifyConversationActivity } = require('./reminders/chatDetector');
 
 router.post('/', express.raw({ type: '*/*' }), async (req, res) => {
   const signature = req.headers['x-line-signature'];
@@ -21,6 +23,12 @@ router.post('/', express.raw({ type: '*/*' }), async (req, res) => {
       const displayName = await getProfile(userId);
       upsertConversationOnUserMessage(userId, displayName, timestamp);
       addMessage(userId, 'user', text, timestamp);
+      try {
+        upsertContactFromChannel('line', userId, displayName);
+        notifyConversationActivity('line', userId);
+      } catch (err) {
+        console.error('[line] contact/detect failed: ' + err.message);
+      }
     }
   }
 });

@@ -1,6 +1,9 @@
 const cron = require('node-cron');
 const { getPendingConversations, getHistory, saveDraft } = require('./db');
 const { generateReply } = require('./claudeClient');
+const { sendDueReminders } = require('./reminders/sender');
+const { syncCalendar, isConfigured: calendarConfigured } = require('./reminders/googleCalendar');
+const { resetStuckReminders } = require('./reminders/store');
 
 const REPLY_THRESHOLD_MS = Number(process.env.REPLY_THRESHOLD_MINUTES || 60) * 60 * 1000;
 
@@ -20,8 +23,33 @@ async function checkAndGenerateDrafts() {
   }
 }
 
+async function runCalendarSync() {
+  try {
+    const r = await syncCalendar();
+    if (r && !r.skipped && (r.created || r.updated || r.cancelled)) console.log('[calendar] ' + JSON.stringify(r));
+  } catch (err) {
+    console.error('[calendar] sync failed: ' + err.message);
+  }
+}
+
+async function runReminders() {
+  try {
+    await sendDueReminders();
+  } catch (err) {
+    console.error('[reminder] run failed: ' + err.message);
+  }
+}
+
 function startScheduler() {
   cron.schedule('*/5 * * * *', checkAndGenerateDrafts);
+  // リマインド: 毎分、送信時刻を過ぎたものを自動送信（前日12:00 / 当日9:00 JST）
+  resetStuckReminders();
+  cron.schedule('* * * * *', runReminders);
+  // Google カレンダー: 10分ごとに面談予定を取り込み
+  if (calendarConfigured()) {
+    cron.schedule('*/10 * * * *', runCalendarSync);
+    runCalendarSync();
+  }
   console.log('Scheduler started');
 }
 
